@@ -1,72 +1,22 @@
 import { redirect } from 'next/navigation';
-import { getSessionUser, isAuthorizedRole } from '@/lib/auth';
+import { getSessionUser } from '@/lib/auth';
+import { db } from '@/db';
+import { announcements, lectures, notifications, subjects, users } from '@/db/schema';
+import { and, count, desc, eq, gte } from 'drizzle-orm';
+import Link from 'next/link';
 
 export default async function DashboardPage() {
   const user = await getSessionUser();
-
-  if (!user) {
-    redirect('/login');
-  }
-
-  if (!isAuthorizedRole(user, ['SUPER_ADMIN', 'STUDENT'])) {
-    redirect('/login');
-  }
-
-  const cards = [
-    { label: 'المواد الحالية', value: '8', detail: '2 نشطة الآن' },
-    { label: 'المحاضرات المكتملة', value: '74%', detail: 'آخر 30 يوم' },
-    { label: 'الاختبارات', value: '5', detail: 'متاحة ومجدولة' },
-    { label: 'الإشعارات', value: '12', detail: '3 غير مقروءة' },
-  ];
-
-  return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <header className="mb-8 flex items-center justify-between">
-        <div>
-          <p className="text-sm text-slate-500">مرحباً بعودتك</p>
-          <h1 className="text-3xl font-black text-slate-900 dark:text-white">{user.fullName}</h1>
-        </div>
-        <a href="/api/auth/logout" className="btn-secondary">تسجيل الخروج</a>
-      </header>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {cards.map((card) => (
-          <div key={card.label} className="card-surface rounded-2xl p-5">
-            <p className="text-sm text-slate-500">{card.label}</p>
-            <p className="mt-3 text-3xl font-black text-slate-900 dark:text-white">{card.value}</p>
-            <p className="mt-2 text-sm text-slate-500">{card.detail}</p>
-          </div>
-        ))}
-      </section>
-
-      <section className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_0.6fr]">
-        <div className="card-surface rounded-[28px] p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-black text-slate-900 dark:text-white">أحدث المحاضرات</h2>
-            <a href="/subjects" className="text-sm font-bold text-medspace-700 dark:text-medspace-300">عرض الكل</a>
-          </div>
-          <div className="space-y-3">
-            {['الفسيولوجيا', 'التشريح', 'العلوم السريرية'].map((lecture) => (
-              <div key={lecture} className="flex items-center justify-between rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
-                <div>
-                  <p className="font-bold text-slate-900 dark:text-white">{lecture}</p>
-                  <p className="text-sm text-slate-500">اليوم · 08:30 صباحاً</p>
-                </div>
-                <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">مكتمل</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="card-surface rounded-[28px] p-5">
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">الإشعارات</h2>
-          <div className="mt-4 space-y-3">
-            {['تم رفع ملف PDF جديد', 'تحديث موعد محاضرة', 'إعلان جديد في علم الأمراض'].map((item) => (
-              <div key={item} className="rounded-2xl bg-slate-100 p-3 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">{item}</div>
-            ))}
-          </div>
-        </div>
-      </section>
-    </main>
-  );
+  if (!user) redirect('/login');
+  const isAdmin = user.role === 'SUPER_ADMIN';
+  const [subjectRows, completedResult, announcementRows, notificationRows, pendingResult] = await Promise.all([
+    db.select({ id: subjects.id, name: subjects.name, description: subjects.description, color: subjects.color, total: count(lectures.id) }).from(subjects).leftJoin(lectures, eq(lectures.subjectId, subjects.id)).where(and(eq(subjects.isActive, true), ...(isAdmin ? [] : [eq(subjects.isVisible, true)]))).groupBy(subjects.id).orderBy(subjects.sortOrder).limit(8),
+    db.select({ total: count(lectures.id) }).from(lectures).where(eq(lectures.status, 'COMPLETED')),
+    db.select({ id: announcements.id, title: announcements.title, content: announcements.content, publishedAt: announcements.publishedAt }).from(announcements).orderBy(desc(announcements.isPinned), desc(announcements.publishedAt)).limit(4),
+    db.select({ id: notifications.id, title: notifications.title, message: notifications.message, createdAt: notifications.createdAt, isRead: notifications.isRead }).from(notifications).where(eq(notifications.userId, user.id)).orderBy(desc(notifications.createdAt)).limit(4),
+    isAdmin ? db.select({ total: count(users.id) }).from(users).where(eq(users.status, 'PENDING')) : Promise.resolve([{ total: 0 }]),
+  ]);
+  const completed = completedResult[0]?.total ?? 0;
+  return <main className="mx-auto max-w-7xl px-5 py-8 md:px-8"><header className="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p className="text-sm text-slate-500">{isAdmin ? 'لوحة تحكم الإدارة' : 'مرحباً بعودتك'}</p><h1 className="text-3xl font-black">{user.fullName}</h1></div><div className="flex gap-2"><Link href="/subjects" className="btn-secondary">المواد</Link>{isAdmin && <Link href="/admin" className="btn-primary">الإدارة</Link>}<form action="/api/auth/logout" method="post"><button className="btn-secondary">خروج</button></form></div></header><div className="mb-6 rounded-2xl bg-gradient-to-l from-medspace-700 to-cyan-600 p-5 text-white"><p className="text-sm text-blue-100">Designed &amp; Owned by</p><p className="text-xl font-black">الحسين الغرسي</p></div><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="المواد النشطة" value={subjectRows.length} hint="من قاعدة البيانات"/><Metric label="المحاضرات المكتملة" value={completed} hint="مجموع المحاضرات المكتملة"/><Metric label="الإعلانات" value={announcementRows.length} hint="آخر الإعلانات المنشورة"/>{isAdmin ? <Metric label="طلبات التسجيل" value={pendingResult[0]?.total ?? 0} hint="تنتظر مراجعة الإدارة"/> : <Metric label="الإشعارات" value={notificationRows.length} hint="آخر التنبيهات"/>}</section><section className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_.6fr]"><div className="card-surface rounded-[28px] p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-black">المواد الدراسية</h2><Link href="/subjects" className="font-bold text-medspace-700">عرض الكل</Link></div>{subjectRows.length ? <div className="grid gap-3 sm:grid-cols-2">{subjectRows.map((subject) => <Link key={subject.id} href={`/subjects/${subject.id}`} className="rounded-2xl border border-slate-200 p-4 transition hover:-translate-y-0.5 hover:shadow-soft dark:border-slate-700"><div className="mb-2 h-2 rounded-full" style={{ backgroundColor: subject.color }}/><p className="font-bold">{subject.name}</p><p className="mt-1 text-sm text-slate-500">{subject.total} محاضرة مسجلة</p></Link>)}</div> : <p className="rounded-xl bg-slate-100 p-4 text-slate-500 dark:bg-slate-800">لا توجد مواد بعد. يمكن للإدارة إضافة المواد من لوحة التحكم.</p>}</div><div className="space-y-6"><div className="card-surface rounded-[28px] p-5"><h2 className="text-xl font-black">الإعلانات</h2><div className="mt-4 space-y-3">{announcementRows.length ? announcementRows.map((item) => <article key={item.id} className="rounded-xl bg-slate-100 p-3 dark:bg-slate-800"><h3 className="font-bold">{item.title}</h3><p className="mt-1 line-clamp-2 text-sm text-slate-500">{item.content}</p></article>) : <p className="text-sm text-slate-500">لا توجد إعلانات بعد.</p>}</div></div><div className="card-surface rounded-[28px] p-5"><h2 className="text-xl font-black">الإشعارات الأخيرة</h2><div className="mt-3 space-y-2">{notificationRows.length ? notificationRows.map((item) => <div key={item.id} className="rounded-xl bg-slate-100 p-3 text-sm dark:bg-slate-800"><span className="font-bold">{item.title}</span><p className="mt-1 text-slate-500">{item.message}</p></div>) : <p className="text-sm text-slate-500">لا توجد إشعارات حالياً.</p>}</div></div></div></section><p className="mt-10 text-center text-xs text-slate-400">MEDSPACE · معلومات من قاعدة البيانات الحية</p></main>;
 }
+function Metric({ label, value, hint }: { label: string; value: number; hint: string }) { return <article className="card-surface rounded-2xl p-5"><p className="text-sm text-slate-500">{label}</p><p className="mt-3 text-3xl font-black">{value}</p><p className="mt-2 text-xs text-slate-400">{hint}</p></article>; }

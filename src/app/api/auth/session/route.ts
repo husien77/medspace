@@ -1,0 +1,8 @@
+import { NextResponse } from 'next/server';
+import { getSessionUser } from '@/lib/auth';
+
+export async function GET() {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: 'غير مصرح.' }, { status: 401 });
+  return NextResponse.json({ user: { id: user.id, fullName: user.fullName, email: user.email, role: user.role } });
+}
